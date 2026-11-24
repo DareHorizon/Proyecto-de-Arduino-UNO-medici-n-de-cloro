@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "author": "Monitor de cloro",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-uno", "id": "uno", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-lcd1602", "id": "lcd1", "top": -220, "left": 20, "attrs": { "pins": "i2c" } },
+    { "type": "board-ds3231", "id": "rtc1", "top": -190, "left": 300, "attrs": {} },
+    { "type": "wokwi-microsd-card", "id": "sd1", "top": 20, "left": 320, "attrs": {} },
+    { "type": "wokwi-analog-joystick", "id": "joy1", "top": 230, "left": 20, "attrs": {} },
+    { "type": "wokwi-rgb-led", "id": "rgb1", "top": 250, "left": 200, "attrs": { "common": "cathode" } },
+    { "type": "wokwi-buzzer", "id": "bz1", "top": 250, "left": 300, "attrs": { "volume": "0.1" } }
+  ],
+  "connections": [
+    [ "lcd1:GND", "uno:GND.2", "black", [] ],
+    [ "lcd1:VCC", "uno:5V", "red", [] ],
+    [ "lcd1:SDA", "uno:A4", "green", [] ],
+    [ "lcd1:SCL", "uno:A5", "purple", [] ],
+
+    [ "rtc1:GND", "uno:GND.2", "black", [] ],
+    [ "rtc1:VCC", "uno:5V", "red", [] ],
+    [ "rtc1:SDA", "uno:A4", "green", [] ],
+    [ "rtc1:SCL", "uno:A5", "purple", [] ],
+
+    [ "sd1:GND", "uno:GND.1", "black", [] ],
+    [ "sd1:VCC", "uno:5V", "red", [] ],
+    [ "sd1:CS", "uno:10", "orange", [] ],
+    [ "sd1:DI", "uno:11", "blue", [] ],
+    [ "sd1:DO", "uno:12", "gold", [] ],
+    [ "sd1:SCK", "uno:13", "gray", [] ],
+
+    [ "joy1:GND", "uno:GND.3", "black", [] ],
+    [ "joy1:VCC", "uno:5V", "red", [] ],
+    [ "joy1:VERT", "uno:A1", "green", [] ],
+    [ "joy1:HORZ", "uno:A0", "blue", [] ],
+    [ "joy1:SEL", "uno:2", "orange", [] ],
+
+    [ "rgb1:COM", "uno:GND.3", "black", [] ],
+    [ "rgb1:R", "uno:3", "red", [] ],
+    [ "rgb1:G", "uno:5", "green", [] ],
+    [ "rgb1:B", "uno:6", "blue", [] ],
+
+    [ "bz1:1", "uno:GND.3", "black", [] ],
+    [ "bz1:2", "uno:4", "orange", [] ]
+  ],
+  "dependencies": {}
+}
