@@ -1,3 +1,5 @@
+# Archivo sacado directamente del tab libraries.txt de Wokwi.
+
 # Wokwi Library List
 # See https://docs.wokwi.com/guides/libraries
 
