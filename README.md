@@ -1,4 +1,4 @@
-* Proyecto de Arduino UNO medición de cloro
+* Proyecto de Arduino UNO medición de cloro en construccion
 
 //////////////////// DISCLAIMER IMPORTANTE \\\\\\\\\\\\\\\\\\\\\\
 
@@ -67,3 +67,8 @@ sin embargo, para los valores que rondeen estos umbrales, al menos dos medicione
 que aparecer para que el buzzer suenen y se tome como alerta real.
 
 Para el modo prueba la logica de alertas es 70% normal, 15% bajo 3.0ppm y 15% por encima de 5.0ppm.
+
+\\\\\\\\\\\\\\ POR RELLENAR \\\\\\\\\\\\\\
+\\\\\\\\\\\\\\ POR RELLENAR \\\\\\\\\\\\\\
+\\\\\\\\\\\\\\ POR RELLENAR \\\\\\\\\\\\\\
+
