@@ -2,11 +2,6 @@
   ============================================================
   MONITOR DE CLORO  (v3)
   ============================================================
-
-  * Puesto que las conexiones pueden cambiar a futuro debido
-    a la falta de un modulo wifi, las conexiones pueden o no
-    cambiar segun necesidad *
-    
   Conexiones:
     LCD 1602 I2C (0x27) + RTC DS3231 (0x68) ... A4 (SDA) / A5 (SCL)
     Modulo SD (SPI) ........................... CS D10, MOSI D11, MISO D12, SCK D13
@@ -14,12 +9,13 @@
     LED RGB catodo comun ...................... R D3, G D5, B D6
     Buzzer .................................... D4
     Reservado para LoRa (futuro) .............. D7, D8 (CS), D9 + bus SPI
-    
+
   Funcionamiento main
     - Modo producción, donde las lecturas son cada 60seg y modo prueba, para
       simulaciones en Wokwi donde las lecturas son cada 2seg.
       El modo prueba tiene un rango de 70% lecturas "normales", 15% < 3.0ppm
       y 15% > 5.0ppm, con tal de probar alertas y confirmaciones.
+      ([FIX] v2: el comentario decia "15% > 3.0" y "15% < 5.0", estaba al reves)
     - Cada lectura se guarda en la SD con registros de largo fijo (25 bytes),
       asi se pueden leer las ultimas 720 lecturas sin gastar RAM, las lecturas
       deberian tener fecha y hora gracias al bendito modulo RTC que venia en
@@ -203,6 +199,18 @@ struct Ignoradas {
 Ignoradas ignProd = { 0, { 0, 0, 0, 0 } };     // se guarda en EEPROM
 Ignoradas ignPrueba = { 0, { 0, 0, 0, 0 } };   // solo RAM
 byte pagIgn = 0;                          // [V3] 0 = contador, 1 = "Borrar contador?"
+
+// [FIX] 'struct EjeJoy' DEBE estar antes de la primera funcion del sketch.
+// El IDE de Arduino genera automaticamente los prototipos de todas las funciones
+// y los pone arriba del todo; si leerEje(EjeJoy&, bool) aparece alli antes de que
+// exista el tipo EjeJoy, el compilador no sabe que es.
+struct EjeJoy {
+  byte pin;
+  bool invertir;
+  bool activo;
+  unsigned long ultimo;
+  unsigned long espera;
+};
 
 // [V3] Edicion del reloj: dia, mes, anio, hora, minuto
 const byte R_DIA = 0, R_MES = 1, R_ANIO = 2, R_HORA = 3, R_MIN = 4;
@@ -623,13 +631,7 @@ bool botonPresionado() {
 }
 
 // [QOL] Un eje del joystick. Se generalizo joyDir() para leer tambien HORZ.
-struct EjeJoy {
-  byte pin;
-  bool invertir;
-  bool activo;
-  unsigned long ultimo;
-  unsigned long espera;
-};
+// (la definicion de 'struct EjeJoy' esta arriba, junto a 'struct Ignoradas')
 EjeJoy ejeY = { PIN_JOY_Y, JOY_INVERTIR_Y != 0, false, 0, 0 };
 // En Wokwi HORZ da 1023 a la IZQUIERDA y 0 a la DERECHA: se invierte por defecto
 // para que izquierda = -1 (volver) y derecha = +1 (entrar).
