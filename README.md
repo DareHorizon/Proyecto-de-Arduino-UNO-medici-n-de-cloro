@@ -17,9 +17,13 @@ en las 3 versiones distintas de "sketch.ino".
 El menú se navega desde un joystick, este menú aparece en una pantalla LCD y es interactuable.
 
 Joystick arriba = Subir
+
 Joystick abajo = Bajar
+
 Joystick izquierda = Atras
+
 Joystick derecha = Entrar
+
 Joystick click = Seleccionar/Confirmar
 
 Si la pantalla llega a estar apagada con el Arduino encendido, un click del joystick la enciende.
