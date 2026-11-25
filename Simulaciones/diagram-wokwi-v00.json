@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "author": "Equipo SIY6122 - Duoc UC Melipilla",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": -4.76, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot1", "top": -20.5, "left": -96.2, "attrs": {} },
+    { "type": "board-ssd1306", "id": "oled1", "top": -121.66, "left": 134.63, "attrs": {} },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": -109,
+      "left": -201.6,
+      "attrs": { "color": "red", "xray": "" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_rojo",
+      "top": -22.8,
+      "left": 263,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_verde",
+      "top": -22.8,
+      "left": 301.4,
+      "attrs": { "color": "green" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 61.55,
+      "left": 249.6,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 61.55,
+      "left": 297.6,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    [ "esp:GND.1", "pot1:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "pot1:VCC", "red", [ "v0" ] ],
+    [ "pot1:SIG", "esp:34", "green", [ "v0" ] ],
+    [ "esp:GND.1", "oled1:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "oled1:VCC", "red", [ "v0" ] ],
+    [ "esp:22", "oled1:SCL", "yellow", [ "v0" ] ],
+    [ "esp:21", "oled1:SDA", "blue", [ "v0" ] ],
+    [ "esp:18", "btn1:2.1", "blue", [ "v0" ] ],
+    [ "esp:GND.2", "btn1:1.1", "black", [ "v0" ] ],
+    [ "esp:19", "led_rojo:A", "red", [ "v0" ] ],
+    [ "led_rojo:C", "r1:1", "black", [ "v0" ] ],
+    [ "r1:2", "esp:GND.2", "black", [ "v0" ] ],
+    [ "esp:23", "led_verde:A", "green", [ "v0" ] ],
+    [ "led_verde:C", "r2:1", "black", [ "v0" ] ],
+    [ "r2:2", "esp:GND.2", "black", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
