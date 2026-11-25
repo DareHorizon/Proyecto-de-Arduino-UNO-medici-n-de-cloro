@@ -2,6 +2,11 @@
   ============================================================
   MONITOR DE CLORO  (v3)
   ============================================================
+
+  * Puesto que las conexiones pueden cambiar a futuro debido
+    a la falta de un modulo wifi, las conexiones pueden o no
+    cambiar segun necesidad *
+    
   Conexiones:
     LCD 1602 I2C (0x27) + RTC DS3231 (0x68) ... A4 (SDA) / A5 (SCL)
     Modulo SD (SPI) ........................... CS D10, MOSI D11, MISO D12, SCK D13
@@ -9,13 +14,12 @@
     LED RGB catodo comun ...................... R D3, G D5, B D6
     Buzzer .................................... D4
     Reservado para LoRa (futuro) .............. D7, D8 (CS), D9 + bus SPI
-
+    
   Funcionamiento main
     - Modo producción, donde las lecturas son cada 60seg y modo prueba, para
       simulaciones en Wokwi donde las lecturas son cada 2seg.
       El modo prueba tiene un rango de 70% lecturas "normales", 15% < 3.0ppm
       y 15% > 5.0ppm, con tal de probar alertas y confirmaciones.
-      ([FIX] v2: el comentario decia "15% > 3.0" y "15% < 5.0", estaba al reves)
     - Cada lectura se guarda en la SD con registros de largo fijo (25 bytes),
       asi se pueden leer las ultimas 720 lecturas sin gastar RAM, las lecturas
       deberian tener fecha y hora gracias al bendito modulo RTC que venia en
