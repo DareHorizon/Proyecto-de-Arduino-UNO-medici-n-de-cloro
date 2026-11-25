@@ -1,4 +1,4 @@
-*Proyecto de Arduino UNO medición de cloro*
+* Proyecto de Arduino UNO medición de cloro
 
 //////////////////// DISCLAIMER IMPORTANTE \\\\\\\\\\\\\\\\\\\\\\
 
@@ -32,7 +32,7 @@ AMARILLA Y PARPADEA.
 
 AZUL = cloro dentro del rango normal, es decir, dentro de los 3.0ppm y 5.0ppm.
 
-AZUL = confirmación activa de alerta por usuario interactuando con el joystick, es decir, alguien
+BLANCO = confirmación activa de alerta por usuario interactuando con el joystick, es decir, alguien
 tiene que fisicamente confirmar que vió la alerta y apretar un boton para que se active esta luz.
 
 ########################################### Uso del menú ###########################################
