@@ -20,7 +20,7 @@ Joystick arriba = Subir
 
 Joystick abajo = Bajar
 
-Joystick izquierda = Atras
+Joystick izquierda = Atras/Salir
 
 Joystick derecha = Entrar
 
@@ -28,6 +28,8 @@ Joystick click = Seleccionar/Confirmar
 
 Si la pantalla llega a estar apagada con el Arduino encendido, un click del joystick la enciende.
 Si no hay actividad, el menu se defaultea a "Lectura en vivo", siempre y cuando no hayan alertas.
+
+(el comportamiento del joystick arriba/abajo puede ser invertido segun donde se aplique el codigo)
 
 ############################################  Modalidades  ##########################################
 
