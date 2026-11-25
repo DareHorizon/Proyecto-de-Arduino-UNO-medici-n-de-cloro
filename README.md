@@ -1,6 +1,6 @@
 ############################  Proyecto de Arduino UNO medición de cloro  ###########################
 
-* DISCLAIMER IMPORTANTE*
+//////////////////// DISCLAIMER IMPORTANTE
 
 El proposito de este repositorio es dejar un log de todos los cambios hechos en la logica del codigo
 que va a estar funcionando en el Arduino UNO R3, se espera guardar versiones, features extras o ideas
@@ -23,5 +23,16 @@ Joystick derecha = Entrar
 Joystick click = Seleccionar/Confirmar
 
 Si la pantalla llega a estar apagada con el Arduino encendido, un click del joystick la enciende.
-
 Si no hay actividad, el menu se defaultea a "Lectura en vivo", siempre y cuando no hayan alertas.
+
+############################################  Modalidades  ##########################################
+
+Existen dos modos dentro del arduino, modo producción y modo prueba. 
+El modo producción es la logica de alertas real del programa, donde la medición se hace cada 1 minuto.
+El modo prueba usa la misma lógica de alertas, pero la medición es cada 2 segundos.
+
+Para el modo de producción, toda alerta por debajo de 3.0ppm y por encima de 5.0ppm lanza una alerta,
+sin embargo, para los valores que rondeen estos umbrales, al menos dos mediciones del mismo tipo tienen
+que aparecer para que el buzzer suenen y se tome como alerta real.
+
+Para el modo prueba la logica de alertas es 70% normal, 15% bajo 3.0ppm y 15% por encima de 5.0ppm.
