@@ -1,6 +1,6 @@
 /*
   ============================================================
-  MONITOR DE CLORO  (v2)
+  MONITOR DE CLORO  (v3)
   ============================================================
   Conexiones:
     LCD 1602 I2C (0x27) + RTC DS3231 (0x68) ... A4 (SDA) / A5 (SCL)
@@ -60,6 +60,32 @@
   [OPT] imprimirPpm() sirve para LCD y Serial (antes el serial lo armaba a mano).
   [OPT] snprintf reemplazado por ponerNum(): ~1.5 KB menos de flash.
   [OPT] La alerta se evalua ANTES de escribir en la SD: reacciona aunque la SD tarde.
+
+  ============================================================
+  CAMBIOS v3   (etiqueta [V3] en el codigo)
+  ------------------------------------------------------------
+  [V3] Cierre de alerta con 2 lecturas: una alerta (BAJO o ALTO) se abre con UNA
+       lectura fuera de rango, pero solo termina tras LECTURAS_CIERRE lecturas
+       normales SEGUIDAS. Evita que un valor rondando 3.0 ppm haga sonar el buzzer
+       una y otra vez. Pasar de BAJO a ALTO (o al reves) sigue siendo inmediato.
+  [V3] Ajustar reloj desde el menu (alternativa al comando serial 't'):
+       arriba/abajo cambia el valor, boton o derecha pasa al siguiente campo,
+       izquierda vuelve al anterior (en el primero cancela). Boton o derecha en el
+       ultimo campo (minutos) guarda con segundos = 0. Requiere RTC conectado.
+  [V3] Alertas ignoradas: una alerta que termina sin que NADIE la haya confirmado
+       suma 1 al contador "Ignoradas" (menu) y guarda la fecha/hora de su inicio.
+         - El contador de Produccion vive en EEPROM (sobrevive a cortes de luz).
+         - El de modo prueba es aparte y solo en RAM (no gasta la EEPROM ni
+           ensucia el contador real).
+         - Todas las alertas, confirmadas o ignoradas, quedan en ALERTAS.CSV
+           (ALPRUEBA.CSV en modo prueba): inicio, fin, tipo, peor valor, estado.
+         - En la pantalla "Ignoradas", derecha -> "Borrar contador?" (no borra el CSV).
+       Comando serial nuevo: a = mostrar el registro de alertas.
+  [V3] Al cambiar de modo con una alerta activa, esa alerta se cierra y registra
+       en el modo en que empezo (antes pasaba al otro modo).
+  [V3] Menu reordenado: "Ignoradas" queda segundo, justo bajo "Lectura en vivo".
+       Los items ahora tienen nombre (IT_...) en vez de numeros sueltos.
+  [OPT] ponerFecha() arma "AAAA-MM-DD HH:MM:SS" para el log y el registro de alertas.
 */
 
 #include <Wire.h>
@@ -96,6 +122,16 @@ const unsigned long REPETIR_MS     = 150UL;      // mantener joystick: velocidad
 const unsigned long REBOTE_MS      = 30UL;       // [FIX] antirrebote del boton
 const unsigned long REINTENTO_SD_MS = 30000UL;   // [FIX] reintento de la SD en segundo plano
 
+// [V3] Lecturas normales SEGUIDAS para dar por terminada una alerta (1 = como en v2)
+const byte LECTURAS_CIERRE = 2;
+
+// [V3] Mapa de la EEPROM
+//   0     daltonismo (v2)
+//   1     marca de formato: si no es EE_MARCA, el contador se inicia en 0
+//   2..7  contador de alertas ignoradas de Produccion (struct Ignoradas)
+const int  EE_DALTONISMO = 0, EE_MARCA_DIR = 1, EE_IGNORADAS = 2;
+const byte EE_MARCA = 0xA5;
+
 // ---------------- Pines ----------------
 const byte PIN_SD_CS  = 10;
 const byte PIN_JOY_Y  = A1;
@@ -112,8 +148,23 @@ const byte REC = 25;
 
 // ---------------- Tipos de alerta y estados de pantalla ----------------
 const byte TIPO_NINGUNA = 0, TIPO_BAJO = 1, TIPO_ALTO = 2;
-const byte E_MENU = 0, E_VIVO = 1, E_PROMEDIO = 2, E_RANGO = 3, E_MSG = 4;
-const byte N_ITEMS = 7;                   // [QOL] +1 por "Sonido"
+const byte E_MENU = 0, E_VIVO = 1, E_PROMEDIO = 2, E_RANGO = 3, E_MSG = 4,
+           E_RELOJ = 5, E_IGNORADAS = 6;  // [V3]
+
+// [V3] Items del menu con nombre, en el orden en que aparecen. Para reordenar
+// el menu basta con mover una linea aqui.
+enum {
+  IT_VIVO,
+  IT_IGNORADAS,                           // [V3]
+  IT_DUMP,
+  IT_PROMEDIO,
+  IT_RANGO,
+  IT_MODO,
+  IT_DALTONISMO,
+  IT_SONIDO,                              // [QOL] v2
+  IT_RELOJ,                               // [V3]
+  N_ITEMS
+};
 const byte N_PAG_PROM = 3;                // [QOL] +1 pagina "periodo" en Promedio
 const byte CH_FLECHAS = 1;                // [QOL] caracter propio del LCD (slot 1; el 0 se confunde con '\0')
 
@@ -134,6 +185,25 @@ unsigned long ultimaMuestra = 0;
 byte tipoAlerta = TIPO_NINGUNA;
 bool confirmada = false;
 unsigned long confirmadaEn = 0;           // [QOL] para el recordatorio
+bool algunaVezConfirmada = false;         // [V3] confirmada al menos una vez (aunque luego venga un recordatorio)
+byte normalesSeguidas = 0;                // [V3] lecturas normales seguidas durante una alerta
+int  extremoX10 = 0;                      // [V3] peor valor de la alerta (minimo si BAJO, maximo si ALTO)
+DateTime inicioAlerta, finAlerta;         // [V3] para el registro de alertas
+
+// [V3] Contador de alertas ignoradas. fecha = dia, mes, hora, minuto del INICIO
+// de la ultima alerta ignorada.
+struct Ignoradas {
+  uint16_t n;
+  byte fecha[4];
+};
+Ignoradas ignProd = { 0, { 0, 0, 0, 0 } };     // se guarda en EEPROM
+Ignoradas ignPrueba = { 0, { 0, 0, 0, 0 } };   // solo RAM
+byte pagIgn = 0;                          // [V3] 0 = contador, 1 = "Borrar contador?"
+
+// [V3] Edicion del reloj: dia, mes, anio, hora, minuto
+const byte R_DIA = 0, R_MES = 1, R_ANIO = 2, R_HORA = 3, R_MIN = 4;
+int  relVal[5];
+byte relCampo = 0;
 unsigned long verdeHasta = 0;
 bool overlay = false;                     // pantalla de alerta visible
 bool buzzerOn = false;
@@ -168,6 +238,16 @@ const char* archivoLog() {
 
 unsigned long intervaloMs() {
   return modoPrueba ? INTERVALO_PRUEBA_MS : INTERVALO_PROD_MS;
+}
+
+// [V3] Archivo del registro de alertas (separado por modo, igual que el log)
+const char* archivoAlertas() {
+  return modoPrueba ? "ALPRUEBA.CSV" : "ALERTAS.CSV";
+}
+
+// [V3] Contador de ignoradas del modo actual
+Ignoradas& ign() {
+  return modoPrueba ? ignPrueba : ignProd;
 }
 
 bool alertaPendiente() {
@@ -228,6 +308,16 @@ char* ponerNum(char* p, unsigned int v, byte n) {
   return p + n;
 }
 
+// [OPT] v3: escribe "AAAA-MM-DD HH:MM:SS" (19 caracteres, sin '\0') y devuelve el final
+char* ponerFecha(char* p, const DateTime& t) {
+  p = ponerNum(p, t.year(), 4);   *p++ = '-';
+  p = ponerNum(p, t.month(), 2);  *p++ = '-';
+  p = ponerNum(p, t.day(), 2);    *p++ = ' ';
+  p = ponerNum(p, t.hour(), 2);   *p++ = ':';
+  p = ponerNum(p, t.minute(), 2); *p++ = ':';
+  return ponerNum(p, t.second(), 2);
+}
+
 bool registroValido(const uint8_t* b) {
   return b[4] == '-' && b[19] == ',' && b[22] == '.' && b[24] == '\n' &&
          isDigit(b[20]) && isDigit(b[21]) && isDigit(b[23]);
@@ -240,13 +330,8 @@ void guardarLectura() {
   // "2026-11-24 15:30:05,04.2\n"
   int x = constrain(ultimaX10, 0, 999);
   char buf[REC];
-  char* p = buf;
-  p = ponerNum(p, ultimaHora.year(), 4);   *p++ = '-';
-  p = ponerNum(p, ultimaHora.month(), 2);  *p++ = '-';
-  p = ponerNum(p, ultimaHora.day(), 2);    *p++ = ' ';
-  p = ponerNum(p, ultimaHora.hour(), 2);   *p++ = ':';
-  p = ponerNum(p, ultimaHora.minute(), 2); *p++ = ':';
-  p = ponerNum(p, ultimaHora.second(), 2); *p++ = ',';
+  char* p = ponerFecha(buf, ultimaHora);   // [OPT] v3: fecha compartida con el registro de alertas
+  *p++ = ',';
   p = ponerNum(p, x / 10, 2);              *p++ = '.';
   p = ponerNum(p, x % 10, 1);              *p   = '\n';
 
@@ -356,22 +441,92 @@ byte crearDump(char* nombre) {
 // ============================================================
 //  Alertas y lecturas
 // ============================================================
+// [V3] Guarda el contador de Produccion en EEPROM (solo cuando cambia: es raro,
+// asi que no hay riesgo de desgastarla). El de prueba nunca se guarda.
+void guardarIgnoradas() {
+  EEPROM.put(EE_IGNORADAS, ignProd);
+  EEPROM.update(EE_MARCA_DIR, EE_MARCA);
+}
+
+// [V3] Agrega una linea al registro de alertas:
+//   inicio,fin,tipo,peor_ppm,estado
+//   2026-11-24 15:30:05,2026-11-24 15:42:05,BAJO,1.2,ignorada
+// "fin" es la PRIMERA lectura normal (o la que cambio de tipo), no la que cerro.
+void registrarAlerta(bool ignorada) {
+  if (!asegurarSD(false)) return;
+  File f = SD.open(archivoAlertas(), FILE_WRITE);
+  if (!f) { sdOk = false; ultimoIntentoSD = millis(); return; }
+  if (f.size() == 0) f.print(F("inicio,fin,tipo,peor_ppm,estado\n"));
+  char b[20];
+  b[19] = '\0';
+  ponerFecha(b, inicioAlerta); f.print(b); f.print(',');
+  ponerFecha(b, finAlerta);    f.print(b); f.print(',');
+  f.print(tipoAlerta == TIPO_BAJO ? F("BAJO,") : F("ALTO,"));
+  imprimirPpm(f, extremoX10);
+  f.print(ignorada ? F(",ignorada\n") : F(",confirmada\n"));
+  f.close();
+}
+
+// [V3] Termina la alerta en curso (tipoAlerta todavia tiene el tipo que termina).
+// Ignorada = nadie la confirmo NUNCA. Si se confirmo y luego un recordatorio
+// quedo sin confirmar, cuenta como confirmada (alguien ya la habia visto).
+void cerrarAlerta() {
+  bool ignorada = !algunaVezConfirmada;
+  if (ignorada) {
+    Ignoradas& c = ign();
+    if (c.n < 65535) c.n++;
+    c.fecha[0] = inicioAlerta.day();  c.fecha[1] = inicioAlerta.month();
+    c.fecha[2] = inicioAlerta.hour(); c.fecha[3] = inicioAlerta.minute();
+    if (!modoPrueba) guardarIgnoradas();
+#if DEBUG_SERIAL
+    Serial.print(F("[ALERTA] terminada SIN confirmar. Ignoradas: "));
+    Serial.println(c.n);
+#endif
+  }
+  registrarAlerta(ignorada);
+}
+
 void evaluarAlerta() {
   byte tipo = TIPO_NINGUNA;
   if (ultimaX10 < UMBRAL_BAJO_X10) tipo = TIPO_BAJO;
   else if (ultimaX10 > UMBRAL_ALTO_X10) tipo = TIPO_ALTO;
 
+  // [V3] Cierre con LECTURAS_CIERRE lecturas normales seguidas. Mientras no se
+  // cumplan, la alerta sigue igual (pantalla, LED y buzzer si no esta confirmada).
+  if (tipo == TIPO_NINGUNA && tipoAlerta != TIPO_NINGUNA) {
+    if (normalesSeguidas == 0) finAlerta = ultimaHora;   // la alerta "termino" aqui
+    if (++normalesSeguidas < LECTURAS_CIERRE) return;
+  } else {
+    // Cambio directo BAJO <-> ALTO: la alerta anterior termina aqui. Si ya habia
+    // lecturas normales en medio, su fin ya quedo anotado en la primera de ellas.
+    if (tipo != tipoAlerta && tipoAlerta != TIPO_NINGUNA && normalesSeguidas == 0)
+      finAlerta = ultimaHora;
+    normalesSeguidas = 0;                // volvio a salir de rango: se reinicia la cuenta
+  }
+
   if (tipo != tipoAlerta) {            // alerta nueva, cambio de tipo o fin de alerta
+    if (tipoAlerta != TIPO_NINGUNA) cerrarAlerta();   // [V3] registrar la que termina
     tipoAlerta = tipo;
     confirmada = false;
+    algunaVezConfirmada = false;         // [V3]
+    normalesSeguidas = 0;                // [V3]
     if (tipo != TIPO_NINGUNA) {
+      inicioAlerta = ultimaHora;         // [V3]
+      extremoX10 = ultimaX10;            // [V3]
 #if DEBUG_SERIAL
       Serial.println(tipo == TIPO_BAJO ? F("[ALERTA] cloro BAJO") : F("[ALERTA] cloro ALTO"));
 #endif
       enviarAlerta(tipo, ultimaX10);
     }
-  } else if (RECORDAR_MS && tipo != TIPO_NINGUNA && confirmada &&
-             millis() - confirmadaEn >= RECORDAR_MS) {
+    return;
+  }
+
+  // [V3] Misma alerta que sigue: actualizar el peor valor
+  if (tipo == TIPO_BAJO && ultimaX10 < extremoX10) extremoX10 = ultimaX10;
+  if (tipo == TIPO_ALTO && ultimaX10 > extremoX10) extremoX10 = ultimaX10;
+
+  if (RECORDAR_MS && tipo != TIPO_NINGUNA && confirmada &&
+      millis() - confirmadaEn >= RECORDAR_MS) {
     // [QOL] Recordatorio: la alerta se confirmo pero el cloro sigue fuera de
     // rango demasiado tiempo -> vuelve a quedar pendiente (pantalla + buzzer).
     confirmada = false;
@@ -513,14 +668,84 @@ void imprimirFechaCorta(const byte* f) {
 
 void imprimirItem(byte i) {
   switch (i) {
-    case 0: lcd.print(F("Lectura en vivo")); break;
+    case IT_VIVO: lcd.print(F("Lectura en vivo")); break;
+    // [V3] El contador se ve directo en el menu, sin entrar
+    case IT_IGNORADAS: lcd.print(F("Ignoradas: ")); lcd.print(ign().n); break;
     // [QOL] En modo prueba las 720 lecturas son 720 x 2 s = 24 min, no 12 h
-    case 1: lcd.print(modoPrueba ? F("Crear dump 24m") : F("Crear dump 12h")); break;
-    case 2: lcd.print(modoPrueba ? F("Promedio 24m") : F("Promedio 12h")); break;
-    case 3: lcd.print(F("Rango de ppm")); break;
-    case 4: lcd.print(modoPrueba ? F("Modo: PRUEBA 2s") : F("Modo: PROD. 60s")); break;
-    case 5: lcd.print(daltonismo ? F("Daltonismo: ON") : F("Daltonismo: OFF")); break;
-    case 6: lcd.print(sonido ? F("Sonido: ON") : F("Sonido: OFF")); break;   // [QOL]
+    case IT_DUMP: lcd.print(modoPrueba ? F("Crear dump 24m") : F("Crear dump 12h")); break;
+    case IT_PROMEDIO: lcd.print(modoPrueba ? F("Promedio 24m") : F("Promedio 12h")); break;
+    case IT_RANGO: lcd.print(F("Rango de ppm")); break;
+    case IT_MODO: lcd.print(modoPrueba ? F("Modo: PRUEBA 2s") : F("Modo: PROD. 60s")); break;
+    case IT_DALTONISMO: lcd.print(daltonismo ? F("Daltonismo: ON") : F("Daltonismo: OFF")); break;
+    case IT_SONIDO: lcd.print(sonido ? F("Sonido: ON") : F("Sonido: OFF")); break;   // [QOL]
+    case IT_RELOJ: lcd.print(F("Ajustar reloj")); break;                             // [V3]
+  }
+}
+
+// ============================================================
+//  [V3] Ajuste del reloj desde el menu
+//    Fecha 24/11/2026      <- dia, mes, anio
+//    Hora  15:30   [OK]    <- hora, minuto
+//  El cursor parpadeante marca el campo que se esta editando.
+// ============================================================
+byte diasMes(byte m, int a) {
+  if (m == 2) return (a % 4 == 0) ? 29 : 28;           // valido para 2001-2099
+  return (m == 4 || m == 6 || m == 9 || m == 11) ? 30 : 31;
+}
+
+void dibujarReloj() {
+  lcd.clear();
+  lcd.print(F("Fecha "));
+  print2(relVal[R_DIA]); lcd.print('/'); print2(relVal[R_MES]); lcd.print('/');
+  lcd.print(relVal[R_ANIO]);
+  lcd.setCursor(0, 1);
+  lcd.print(F("Hora  "));
+  print2(relVal[R_HORA]); lcd.print(':'); print2(relVal[R_MIN]);
+  lcd.print(F(" [OK]"));
+  // Columna/fila del ultimo digito de cada campo, para el cursor parpadeante
+  static const byte col[5] = { 7, 10, 15, 7, 10 };
+  lcd.setCursor(col[relCampo], relCampo >= R_HORA ? 1 : 0);
+  lcd.blink();
+}
+
+void iniciarReloj() {
+  DateTime t = ahora();
+  relVal[R_DIA] = t.day();   relVal[R_MES] = t.month(); relVal[R_ANIO] = t.year();
+  relVal[R_HORA] = t.hour(); relVal[R_MIN] = t.minute();
+  if (relVal[R_ANIO] < 2024) relVal[R_ANIO] = 2026;    // sin hora valida: parte en un anio razonable
+  relCampo = R_DIA;
+}
+
+// Sube/baja el campo actual dando la vuelta (ej. minuto 59 -> 00)
+void cambiarCampo(int8_t d) {
+  static const int minimo[5] = { 1, 1, 2024, 0, 0 };
+  int maximo[5] = { diasMes(relVal[R_MES], relVal[R_ANIO]), 12, 2099, 23, 59 };
+  int v = relVal[relCampo] + d;
+  if (v > maximo[relCampo]) v = minimo[relCampo];
+  if (v < minimo[relCampo]) v = maximo[relCampo];
+  relVal[relCampo] = v;
+  // Si cambio el mes o el anio, el dia puede quedar fuera (ej. 31 -> febrero)
+  byte dm = diasMes(relVal[R_MES], relVal[R_ANIO]);
+  if (relVal[R_DIA] > dm) relVal[R_DIA] = dm;
+}
+
+// ============================================================
+//  [V3] Pantalla de alertas ignoradas
+// ============================================================
+void dibujarIgnoradas() {
+  lcd.clear();
+  Ignoradas& c = ign();
+  if (pagIgn == 0) {
+    lcd.print(F("Ignoradas: ")); lcd.print(c.n);
+    lcd.setCursor(15, 0); lcd.print(modoPrueba ? 'T' : 'P');
+    lcd.setCursor(0, 1);
+    if (c.n == 0) { lcd.print(F("Ninguna")); return; }
+    lcd.print(F("Ult: "));                     // inicio de la ultima ignorada
+    print2(c.fecha[0]); lcd.print('/'); print2(c.fecha[1]); lcd.print(' ');
+    print2(c.fecha[2]); lcd.print(':'); print2(c.fecha[3]);
+  } else {
+    lcd.print(F("Borrar contador?"));
+    lcd.setCursor(0, 1); lcd.print(F("Pulsar=si <=no"));
   }
 }
 
@@ -548,6 +773,7 @@ void dibujarVivo() {
 }
 
 void dibujarAlerta() {
+  lcd.noBlink();                            // [V3] por si la alerta tapa el ajuste de reloj
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(tipoAlerta == TIPO_BAJO ? F("!ALERTA: BAJO!") : F("!ALERTA: ALTO!"));
@@ -592,6 +818,7 @@ void dibujarRango() {
 }
 
 void iniciarMensaje() {
+  lcd.noBlink();                            // [V3] apaga el cursor del ajuste de reloj
   estado = E_MSG;
   estadoTrasMsg = E_MENU;                   // [QOL] por defecto vuelve al menu (confirmarAlerta lo cambia)
   msgHasta = millis() + MSG_MS;
@@ -613,11 +840,14 @@ void mensajeRam(const __FlashStringHelper* l1, const char* l2) {
 
 void redibujar() {
   if (estado == E_MSG) estado = estadoTrasMsg;   // un mensaje tapado por una alerta se descarta
+  lcd.noBlink();                            // [V3] solo el ajuste de reloj usa el cursor
   switch (estado) {
-    case E_MENU:     dibujarMenu();     break;
-    case E_VIVO:     dibujarVivo();     break;
-    case E_PROMEDIO: dibujarPromedio(); break;
-    case E_RANGO:    dibujarRango();    break;
+    case E_MENU:      dibujarMenu();      break;
+    case E_VIVO:      dibujarVivo();      break;
+    case E_PROMEDIO:  dibujarPromedio();  break;
+    case E_RANGO:     dibujarRango();     break;
+    case E_RELOJ:     dibujarReloj();     break;   // [V3]
+    case E_IGNORADAS: dibujarIgnoradas(); break;   // [V3]
   }
 }
 
@@ -649,12 +879,39 @@ void revisarInactividad() {
 // ============================================================
 //  Menu y logica de interfaz
 // ============================================================
+// [V3] Guarda la fecha/hora editada (segundos = 0)
+void guardarReloj() {
+  rtc.adjust(DateTime(relVal[R_ANIO], relVal[R_MES], relVal[R_DIA],
+                      relVal[R_HORA], relVal[R_MIN], 0));
+#if DEBUG_SERIAL
+  Serial.println(F("[RELOJ] ajustado desde el menu"));
+#endif
+  mensaje(F("Reloj"), F("ajustado"));
+}
+
+// [V3] Si hay una alerta activa al cambiar de modo, se cierra y registra en el
+// modo en que empezo. (Con alerta PENDIENTE no se puede llegar al menu, asi que
+// aqui siempre esta confirmada y nunca suma una "ignorada" falsa.)
+void cerrarAlertaPorCambioDeModo() {
+  if (tipoAlerta == TIPO_NINGUNA) return;
+  finAlerta = ahora();
+  cerrarAlerta();
+  tipoAlerta = TIPO_NINGUNA;
+  confirmada = false;
+  algunaVezConfirmada = false;
+  normalesSeguidas = 0;
+}
+
 void ejecutarItem() {
-  switch (itemSel) {
-    case 0:
+  switch (itemSel) {                       // [V3] items con nombre (ver enum IT_...)
+    case IT_VIVO:
       irA(E_VIVO);
       break;
-    case 1: {
+    case IT_IGNORADAS:                     // [V3]
+      pagIgn = 0;
+      irA(E_IGNORADAS);
+      break;
+    case IT_DUMP: {
       char nombre[13];
       lcd.clear(); lcd.print(F("Copiando..."));   // [QOL] el dump tarda; avisa que no se colgo
       byte r = crearDump(nombre);
@@ -663,29 +920,35 @@ void ejecutarItem() {
       else             mensaje(F("Error SD"), F("Revise tarjeta"));
       break;
     }
-    case 2:
+    case IT_PROMEDIO:
       lcd.clear(); lcd.print(F("Calculando..."));  // [QOL] idem
       resCodigo = analizar();
       pagProm = 0;
       irA(E_PROMEDIO);
       break;
-    case 3:
+    case IT_RANGO:
       irA(E_RANGO);
       break;
-    case 4:
+    case IT_MODO:
+      cerrarAlertaPorCambioDeModo();       // [V3]
       modoPrueba = !modoPrueba;
       if (!modoPrueba) sonido = true;      // [QOL] seguridad: en Produccion el buzzer vuelve a ON
       tomarLectura();                      // lectura inmediata con el nuevo intervalo
       dibujarMenu();
       break;
-    case 5:
+    case IT_DALTONISMO:
       daltonismo = !daltonismo;
-      EEPROM.update(0, daltonismo ? 1 : 0);
+      EEPROM.update(EE_DALTONISMO, daltonismo ? 1 : 0);
       dibujarMenu();
       break;
-    case 6:                                // [QOL] silenciar / activar buzzer
+    case IT_SONIDO:                        // [QOL] silenciar / activar buzzer
       sonido = !sonido;
       dibujarMenu();
+      break;
+    case IT_RELOJ:                         // [V3]
+      if (!rtcOk) { mensaje(F("Sin RTC"), F("no se puede")); break; }
+      iniciarReloj();
+      irA(E_RELOJ);
       break;
   }
 }
@@ -694,6 +957,7 @@ void confirmarAlerta() {
   // [QOL] Recordar donde estaba el usuario para volver ahi despues del mensaje
   byte volverA = (estado == E_MSG) ? estadoTrasMsg : estado;
   confirmada = true;
+  algunaVezConfirmada = true;              // [V3] ya no cuenta como ignorada
   confirmadaEn = millis();                 // [QOL] para el recordatorio
   verdeHasta = millis() + VERDE_MS;
   overlay = false;
@@ -736,6 +1000,34 @@ void manejarUI(bool btn, int8_t dir, int8_t dx) {
     case E_MSG:
       if (btn || dx < 0 || (long)(millis() - msgHasta) >= 0) irA(estadoTrasMsg);
       break;
+    case E_RELOJ:                          // [V3]
+      if (dir) {
+        cambiarCampo(dir);                 // mantener el joystick repite (rapido para los minutos)
+        dibujarReloj();
+      } else if (btn || dx > 0) {
+        if (relCampo == R_MIN) guardarReloj();
+        else { relCampo++; dibujarReloj(); }
+      } else if (dx < 0) {
+        if (relCampo == R_DIA) mensaje(F("Reloj"), F("sin cambios"));
+        else { relCampo--; dibujarReloj(); }
+      }
+      break;
+    case E_IGNORADAS:                      // [V3]
+      if (pagIgn == 0) {
+        if (btn || dx < 0) volverMenu();
+        else if (dx > 0 || dir) { pagIgn = 1; dibujarIgnoradas(); }   // arriba/abajo sirve si no hay eje X
+      } else {
+        if (btn) {
+          Ignoradas& c = ign();
+          c.n = 0;
+          memset(c.fecha, 0, sizeof(c.fecha));
+          if (!modoPrueba) guardarIgnoradas();
+          mensaje(F("Contador"), F("borrado"));
+        } else if (dx < 0 || dir) {
+          pagIgn = 0; dibujarIgnoradas();
+        }
+      }
+      break;
   }
 }
 
@@ -745,13 +1037,14 @@ void manejarUI(bool btn, int8_t dir, int8_t dx) {
 //    d                       vuelca las ultimas 720 lecturas del log activo (CSV)
 //    s                       estado (modo, RTC, SD) y estadisticas
 //    t 2026-11-24 15:30:00   ajusta el RTC
+//    a                       [V3] muestra el registro de alertas (ALERTAS.CSV / ALPRUEBA.CSV)
 //    ?                       ayuda
 //  OJO: el volcado bloquea mientras transmite (~20 s a 9600 baudios, ~2 s a 115200);
 //  durante ese tiempo no se atiende el joystick.
 // ============================================================
 #if COMANDOS_SERIAL
 void ayudaSerial() {
-  Serial.println(F("Comandos: d = volcar lecturas | s = estado | ? = ayuda"));
+  Serial.println(F("Comandos: d = volcar lecturas | s = estado | a = alertas | ? = ayuda"));
   Serial.println(F("          t AAAA-MM-DD HH:MM:SS = ajustar reloj"));
 }
 
@@ -760,6 +1053,7 @@ void estadoSerial() {
   Serial.print(F(" | RTC: ")); Serial.print(rtcOk ? F("OK") : F("ERROR"));
   resCodigo = analizar();                  // (puede reconectar la SD)
   Serial.print(F(" | SD: ")); Serial.println(sdOk ? F("OK") : F("ERROR"));
+  Serial.print(F("Alertas ignoradas: ")); Serial.println(ign().n);   // [V3]
   if (resCodigo) { Serial.println(resCodigo == 2 ? F("Error SD") : F("Sin datos")); return; }
   Serial.print(F("N=")); Serial.print(resN);
   Serial.print(F(" prom=")); imprimirPpm(Serial, resProm);
@@ -794,6 +1088,14 @@ void procesarComando(char* c) {
       break;
     }
     case 's': case 'S': estadoSerial(); break;
+    case 'a': case 'A': {                  // [V3] registro de alertas completo
+      if (!asegurarSD(true)) { Serial.println(F("Error SD")); break; }
+      File f = SD.open(archivoAlertas(), FILE_READ);
+      if (!f) { Serial.println(F("Sin alertas registradas")); break; }
+      while (f.available()) Serial.write(f.read());
+      f.close();
+      break;
+    }
     case 't': case 'T': ajustarHora(c + 1); break;
     default: ayudaSerial(); break;
   }
@@ -846,7 +1148,10 @@ void setup() {
   }
   sdOk = SD.begin(PIN_SD_CS);
   ultimoIntentoSD = millis();               // [FIX]
-  daltonismo = (EEPROM.read(0) == 1);
+  daltonismo = (EEPROM.read(EE_DALTONISMO) == 1);
+  // [V3] Contador de ignoradas: solo se lee si la EEPROM ya tiene el formato v3
+  // (una EEPROM nueva viene llena de 0xFF y daria 65535 ignoradas).
+  if (EEPROM.read(EE_MARCA_DIR) == EE_MARCA) EEPROM.get(EE_IGNORADAS, ignProd);
 
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print(F("RTC:")); lcd.print(rtcOk ? F("OK") : F("ERROR"));
