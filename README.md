@@ -17,6 +17,7 @@ en las 3 versiones distintas de "sketch.ino".
 El módulo RGB tiene dos modalidades, "Normal y Daltonismo", y la lógica de esta es la siguiente.
 
 /// NORMAL:
+
 ROJO = rango de cloro por debajo de 3.0ppm o por encima de 5.0ppm, es decir, TODA ALERTA ES ROJA.
 
 AZUL = cloro dentro del rango normal, es decir, dentro de los 3.0ppm y 5.0ppm.
@@ -25,6 +26,7 @@ VERDE = confirmación activa de alerta por usuario interactuando con el joystick
 tiene que fisicamente confirmar que vió la alerta y apretar un boton para que se active esta luz.
 
 /// DALTONISMO (Deuteranopia y Protanopia):
+
 AMARILLO = rango de cloro por debajo de 3.0ppm o por encima de 5.0ppm, es decir, TODA ALERTA ES
 AMARILLA Y PARPADEA.
 
