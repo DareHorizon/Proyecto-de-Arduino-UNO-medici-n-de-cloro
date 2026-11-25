@@ -85,6 +85,11 @@
        en el modo en que empezo (antes pasaba al otro modo).
   [V3] Menu reordenado: "Ignoradas" queda segundo, justo bajo "Lectura en vivo".
        Los items ahora tienen nombre (IT_...) en vez de numeros sueltos.
+  [FIX] LED RGB: despues del verde de "confirmada" volvia a ROJO mientras la alerta
+       seguia abierta (cloro aun fuera de rango o esperando LECTURAS_CIERRE lecturas
+       normales; ~2 min en Produccion). Ahora solo una alerta SIN confirmar pone el
+       LED rojo (amarillo parpadeante en daltonismo); confirmada -> verde 5 s -> azul.
+       Tambien: una alerta nueva durante esos 5 s de verde ya no queda tapada por el verde.
   [OPT] ponerFecha() arma "AAAA-MM-DD HH:MM:SS" para el log y el registro de alertas.
 */
 
@@ -574,27 +579,34 @@ void setRGB(bool r, bool g, bool b) {
 }
 
 /*
-  Paleta normal ........ azul = normal, rojo = fuera de rango, verde = confirmada
-  Paleta daltonismo .... azul = normal, amarillo = fuera de rango, blanco = confirmada
-    (azul/amarillo es el eje que se distingue bien en deuteranopia y protanopia;
-     ademas el amarillo PARPADEA mientras la alerta no esta confirmada)
+  LED = "necesita atencion?"  (solo una alerta SIN confirmar se muestra como alerta)
+  Paleta normal ........ rojo = alerta pendiente, verde = recien confirmada (5 s),
+                         azul = nada pendiente
+  Paleta daltonismo .... amarillo PARPADEANTE = alerta pendiente, blanco = recien
+                         confirmada (5 s), azul = nada pendiente
+    (azul/amarillo es el eje que se distingue bien en deuteranopia y protanopia)
+  [FIX] Una alerta ya confirmada ya no deja el LED en rojo/amarillo: aunque siga
+        "abierta" (el cloro sigue fuera de rango, o faltan LECTURAS_CIERRE lecturas
+        normales para cerrarla), el LED vuelve a azul tras el verde. Si el cloro
+        sigue mal, el recordatorio (RECORDAR_MS) la vuelve a dejar pendiente.
 */
 void actualizarSalidas() {
   unsigned long t = millis();
   bool pendiente = alertaPendiente();
-  bool verde = (long)(verdeHasta - t) > 0;
+  // [FIX] Una alerta nueva (o un recordatorio) tiene prioridad sobre el verde
+  bool verde = !pendiente && (long)(verdeHasta - t) > 0;
 
-  if (verde) {
-    setRGB(daltonismo, true, daltonismo);
-  } else if (tipoAlerta != TIPO_NINGUNA) {
+  if (pendiente) {
     if (daltonismo) {
-      bool on = !pendiente || ((t / 250) % 2 == 0);
+      bool on = ((t / 250) % 2 == 0);
       setRGB(on, on, false);
     } else {
       setRGB(true, false, false);
     }
+  } else if (verde) {
+    setRGB(daltonismo, true, daltonismo);
   } else {
-    setRGB(false, false, true);
+    setRGB(false, false, true);              // [FIX] nada pendiente -> azul
   }
 
   // Buzzer: suena (intermitente) solo mientras la alerta NO esta confirmada
